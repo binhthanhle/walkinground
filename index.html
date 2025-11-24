@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RouteRunner - Smart Loop Generator</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
+        #map { height: 100%; width: 100%; z-index: 0; }
+        
+        /* Custom UI transitions */
+        .modal {
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.95);
+        }
+        .modal.active {
+            opacity: 1;
+            pointer-events: auto;
+            transform: scale(1);
+        }
+
+        .slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 8px;
+            background: #e2e8f0;
+            outline: none;
+            border-radius: 4px;
+        }
+        
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            background: #3b82f6;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+
+        /* Loading Spinner */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Top Overlay: Instructions -->
+    <div id="instructions" class="absolute top-4 left-0 right-0 mx-auto w-11/12 max-w-md bg-white/90 backdrop-blur-sm p-4 rounded-xl shadow-lg z-[1000] text-center transition-all duration-300">
+        <h1 class="font-bold text-gray-800 text-lg"><i class="fas fa-map-marker-alt text-red-500 mr-2"></i>Tap map to start</h1>
+        <p class="text-xs text-gray-500 mt-1">Select a starting point for your exercise.</p>
+    </div>
+
+    <!-- Active Run Stats Panel (Hidden initially) -->
+    <div id="statsPanel" class="hidden absolute bottom-0 left-0 w-full bg-white rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.1)] z-[1000] p-6 transition-transform duration-300 transform translate-y-full">
+        <div class="flex justify-between items-center mb-4">
+            <div>
+                <p class="text-gray-500 text-sm">Target</p>
+                <p class="text-2xl font-bold text-gray-800"><span id="targetDisplay">0</span> km</p>
+            </div>
+            <div class="text-right">
+                <p class="text-gray-500 text-sm">Covered</p>
+                <p class="text-2xl font-bold text-blue-600"><span id="coveredDisplay">0.00</span> km</p>
+            </div>
+        </div>
+        
+        <!-- Progress Bar -->
+        <div class="w-full bg-gray-200 rounded-full h-2.5 mb-6">
+            <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+        </div>
+
+        <div class="flex gap-3">
+            <button onclick="stopExercise()" class="flex-1 bg-red-100 text-red-600 py-3 rounded-xl font-semibold hover:bg-red-200 transition">Exit</button>
+            <button onclick="simulateMovement()" class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-500/30">
+                <i class="fas fa-play mr-2"></i>Simulate Run
+            </button>
+        </div>
+        <p class="text-center text-xs text-gray-400 mt-3">GPS Tracking Active</p>
+    </div>
+
+    <!-- Modal 1: Activity Selection -->
+    <div id="activityModal" class="modal fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl p-6 w-11/12 max-w-sm shadow-2xl">
+            <h2 class="text-xl font-bold text-gray-800 mb-4 text-center">What's the plan?</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <button onclick="selectActivity('Walking')" class="p-4 rounded-xl border-2 border-gray-100 hover:border-blue-500 hover:bg-blue-50 transition flex flex-col items-center gap-2">
+                    <i class="fas fa-walking text-2xl text-green-500"></i>
+                    <span class="font-medium text-gray-700">Walking</span>
+                </button>
+                <button onclick="selectActivity('Running')" class="p-4 rounded-xl border-2 border-gray-100 hover:border-blue-500 hover:bg-blue-50 transition flex flex-col items-center gap-2">
+                    <i class="fas fa-running text-2xl text-blue-500"></i>
+                    <span class="font-medium text-gray-700">Running</span>
+                </button>
+                <button onclick="selectActivity('Jogging')" class="p-4 rounded-xl border-2 border-gray-100 hover:border-blue-500 hover:bg-blue-50 transition flex flex-col items-center gap-2">
+                    <i class="fas fa-stopwatch text-2xl text-orange-500"></i>
+                    <span class="font-medium text-gray-700">Jogging</span>
+                </button>
+                <button onclick="selectActivity('Biking')" class="p-4 rounded-xl border-2 border-gray-100 hover:border-blue-500 hover:bg-blue-50 transition flex flex-col items-center gap-2">
+                    <i class="fas fa-bicycle text-2xl text-purple-500"></i>
+                    <span class="font-medium text-gray-700">Biking</span>
+                </button>
+            </div>
+            <button onclick="closeModal('activityModal')" class="mt-6 w-full py-2 text-gray-400 text-sm hover:text-gray-600">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Modal 2: Distance Slider -->
+    <div id="distanceModal" class="modal fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl p-6 w-11/12 max-w-sm shadow-2xl">
+            <h2 class="text-xl font-bold text-gray-800 mb-2 text-center">Set Goal Distance</h2>
+            <p class="text-center text-gray-500 text-sm mb-8">We'll create a loop route for you.</p>
+            
+            <div class="relative mb-8 px-2">
+                <input type="range" min="1" max="10" step="0.5" value="3" id="distanceSlider" class="slider-thumb" oninput="updateDistanceValue(this.value)">
+                <div class="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-3 py-1 rounded-full font-bold shadow-lg">
+                    <span id="distanceValue">3</span> km
+                </div>
+            </div>
+            
+            <div id="routeLoading" class="hidden flex justify-center py-4">
+                <div class="loader"></div>
+            </div>
+
+            <button onclick="generateRoute()" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-lg hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition">
+                Create Route
+            </button>
+            <button onclick="backToActivity()" class="mt-4 w-full py-2 text-gray-400 text-sm hover:text-gray-600">Back</button>
+        </div>
+    </div>
+
+    <!-- Modal 3: Congrats -->
+    <div id="congratsModal" class="modal fixed inset-0 z-[3000] flex items-center justify-center bg-black/80 backdrop-blur-md">
+        <div class="bg-white rounded-2xl p-8 w-11/12 max-w-sm shadow-2xl text-center transform transition-all">
+            <div class="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-trophy text-4xl text-yellow-500"></i>
+            </div>
+            <h2 class="text-2xl font-bold text-gray-800 mb-2">Route Complete!</h2>
+            <p class="text-gray-600 mb-6">You absolutely crushed that <span id="finalActivity">run</span>.</p>
+            
+            <div class="bg-gray-50 rounded-xl p-4 mb-6">
+                <p class="text-sm text-gray-500">Total Distance</p>
+                <p class="text-3xl font-bold text-gray-800"><span id="finalDist">0.0</span> km</p>
+            </div>
+
+            <button onclick="resetApp()" class="w-full bg-green-500 text-white py-3 rounded-xl font-bold text-lg hover:bg-green-600 shadow-lg shadow-green-500/30 transition">
+                Start New Route
+            </button>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // --- State Management ---
+        let map;
+        let startMarker;
+        let userMarker;
+        let routeLayer;
+        let currentActivity = '';
+        let targetDistanceKm = 3;
+        let selectedStartCoords = null;
+        let routeCoordinates = []; // Array of [lat, lng]
+        let isExercising = false;
+        let coveredDistance = 0;
+        let simInterval;
+        let currentSimIndex = 0;
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+        });
+
+        function initMap() {
+            // Default to a central location (London) if geolocation isn't immediately available
+            map = L.map('map').setView([51.505, -0.09], 13);
+
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 20
+            }).addTo(map);
+
+            // Try to get real user location
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    map.setView([lat, lng], 15);
+                });
+            }
+
+            // Map Click Event
+            map.on('click', function(e) {
+                if (isExercising) return;
+                
+                selectedStartCoords = e.latlng;
+                
+                // Remove old marker
+                if (startMarker) map.removeLayer(startMarker);
+                if (routeLayer) map.removeLayer(routeLayer);
+
+                // Add new marker
+                startMarker = L.marker(e.latlng).addTo(map);
+                
+                // Show Activity Modal
+                openModal('activityModal');
+            });
+        }
+
+        // --- UI Functions ---
+        function openModal(id) {
+            document.getElementById(id).classList.add('active');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        function selectActivity(activity) {
+            currentActivity = activity;
+            closeModal('activityModal');
+            openModal('distanceModal');
+        }
+
+        function backToActivity() {
+            closeModal('distanceModal');
+            openModal('activityModal');
+        }
+
+        function updateDistanceValue(val) {
+            document.getElementById('distanceValue').innerText = val;
+            targetDistanceKm = parseFloat(val);
+        }
+
+        function resetApp() {
+            closeModal('congratsModal');
+            document.getElementById('statsPanel').classList.add('translate-y-full');
+            document.getElementById('instructions').style.display = 'block';
+            
+            if (startMarker) map.removeLayer(startMarker);
+            if (routeLayer) map.removeLayer(routeLayer);
+            if (userMarker) map.removeLayer(userMarker);
+            
+            startMarker = null;
+            routeLayer = null;
+            userMarker = null;
+            isExercising = false;
+            coveredDistance = 0;
+            clearInterval(simInterval);
+            
+            // Re-enable map click
+            map.getContainer().style.cursor = '';
+        }
+
+        // --- Core Logic: Route Generation ---
+        
+        async function generateRoute() {
+            const btn = document.querySelector('#distanceModal button');
+            const loader = document.getElementById('routeLoading');
+            
+            btn.style.display = 'none';
+            loader.style.display = 'flex';
+
+            const lat = selectedStartCoords.lat;
+            const lng = selectedStartCoords.lng;
+            
+            // 1. Generate Waypoints (Geometric Diamond Shape)
+            // Circumference ~ distance. Radius ~ distance / 2pi.
+            // Converting km to degrees (roughly). 1 deg lat ~ 111km.
+            
+            const R_km = targetDistanceKm / (2 * Math.PI); 
+            const dLat = R_km / 111; 
+            const dLng = R_km / (111 * Math.cos(lat * (Math.PI / 180)));
+
+            // Create 4 points around the center to form a loop
+            const points = [
+                `${lng},${lat}`, // Start
+                `${lng + dLng},${lat + dLat}`, // NE
+                `${lng + dLng * 1.5},${lat - dLat * 0.5}`, // SE (slightly skewed for variation)
+                `${lng - dLng},${lat - dLat}`, // SW
+                `${lng - dLng},${lat + dLat}`, // NW
+                `${lng},${lat}`  // End
+            ];
+
+            const coordsString = points.join(';');
+
+            // 2. Fetch Snap-to-Road Route from OSRM
+            // Profiles: 'foot', 'bike', 'car'.
+            let profile = 'foot';
+            if (currentActivity === 'Biking') profile = 'bike';
+
+            try {
+                const response = await fetch(`https://router.project-osrm.org/route/v1/${profile}/${coordsString}?overview=full&geometries=geojson`);
+                const data = await response.json();
+
+                closeModal('distanceModal');
+                btn.style.display = 'block';
+                loader.style.display = 'none';
+
+                if (data.code === 'Ok') {
+                    // Extract coordinates (GeoJSON is [lng, lat], Leaflet wants [lat, lng])
+                    const geojsonCoords = data.routes[0].geometry.coordinates;
+                    routeCoordinates = geojsonCoords.map(c => [c[1], c[0]]);
+                    
+                    startExercise(routeCoordinates);
+                } else {
+                    alert("Could not find a road route here. Try a different spot.");
+                }
+            } catch (e) {
+                console.error(e);
+                alert("Routing service is busy. Please try again in a moment.");
+                closeModal('distanceModal');
+                btn.style.display = 'block';
+                loader.style.display = 'none';
+            }
+        }
+
+        function startExercise(coords) {
+            // Draw Route
+            if (routeLayer) map.removeLayer(routeLayer);
+            routeLayer = L.polyline(coords, {
+                color: '#3b82f6',
+                weight: 6,
+                opacity: 0.8,
+                lineJoin: 'round'
+            }).addTo(map);
+
+            map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+
+            // Initialize User Marker at start
+            const startPt = coords[0];
+            userMarker = L.circleMarker(startPt, {
+                radius: 8,
+                fillColor: '#ef4444',
+                color: '#fff',
+                weight: 2,
+                fillOpacity: 1
+            }).addTo(map);
+
+            // UI Updates
+            document.getElementById('instructions').style.display = 'none';
+            const statsPanel = document.getElementById('statsPanel');
+            statsPanel.classList.remove('hidden');
+            // Allow render then slide up
+            setTimeout(() => {
+                statsPanel.classList.remove('translate-y-full');
+            }, 50);
+
+            document.getElementById('targetDisplay').innerText = targetDistanceKm;
+            document.getElementById('coveredDisplay').innerText = "0.00";
+            document.getElementById('progressBar').style.width = "0%";
+
+            isExercising = true;
+            coveredDistance = 0;
+            currentSimIndex = 0;
+        }
+
+        function stopExercise() {
+            if(confirm("Are you sure you want to stop this route?")) {
+                resetApp();
+            }
+        }
+
+        // --- Simulation & Completion Logic ---
+
+        function simulateMovement() {
+            if (!isExercising || routeCoordinates.length === 0) return;
+            
+            // Prevent multiple intervals
+            if (simInterval) clearInterval(simInterval);
+
+            // Speed depends on activity
+            let speed = 20; // lower is faster
+            if (currentActivity === 'Biking') speed = 10;
+
+            simInterval = setInterval(() => {
+                if (currentSimIndex >= routeCoordinates.length - 1) {
+                    finishRoute();
+                    return;
+                }
+
+                currentSimIndex++;
+                const newPos = routeCoordinates[currentSimIndex];
+                
+                // Update Marker
+                userMarker.setLatLng(newPos);
+                
+                // Calculate Distance (Simple accumulation based on steps)
+                // In a real app, we'd sum distance between GPS points. 
+                // Here we just estimate progress % based on array index for smoothness
+                const progress = currentSimIndex / routeCoordinates.length;
+                const currentKm = targetDistanceKm * progress;
+                
+                updateStats(currentKm, progress * 100);
+
+            }, speed);
+        }
+
+        function updateStats(km, percent) {
+            document.getElementById('coveredDisplay').innerText = km.toFixed(2);
+            document.getElementById('progressBar').style.width = percent + "%";
+        }
+
+        function finishRoute() {
+            clearInterval(simInterval);
+            isExercising = false;
+            
+            // Show Congrats
+            document.getElementById('finalActivity').innerText = currentActivity.toLowerCase();
+            document.getElementById('finalDist').innerText = targetDistanceKm;
+            openModal('congratsModal');
+        }
+
+        // Helper: Haversine Formula for real distance (Not used in simple simulation but good for real GPS)
+        function getDistanceFromLatLonInKm(lat1,lon1,lat2,lon2) {
+            var R = 6371; 
+            var dLat = deg2rad(lat2-lat1);  
+            var dLon = deg2rad(lon2-lon1); 
+            var a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+            var d = R * c; 
+            return d;
+        }
+
+        function deg2rad(deg) {
+            return deg * (Math.PI/180);
+        }
+        
+    </script>
+</body>
+</html>
