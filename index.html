@@ -18,7 +18,6 @@
         body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
         #map { height: 100%; width: 100%; z-index: 0; }
         
-        /* Custom UI transitions */
         .modal {
             transition: opacity 0.3s ease, transform 0.3s ease;
             opacity: 0;
@@ -51,7 +50,6 @@
             border-radius: 50%;
         }
 
-        /* Loading Spinner */
         .loader {
             border: 4px solid #f3f3f3;
             border-top: 4px solid #3b82f6;
@@ -61,6 +59,23 @@
             animation: spin 1s linear infinite;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* Blinking dot for user location */
+        .gps-pulse {
+            width: 15px;
+            height: 15px;
+            background: #3b82f6;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+            animation: pulse-blue 2s infinite;
+        }
+        
+        @keyframes pulse-blue {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -73,12 +88,20 @@
         <h1 class="font-bold text-gray-800 text-lg"><i class="fas fa-map-marker-alt text-red-500 mr-2"></i>Tap map to start</h1>
         <p class="text-xs text-gray-500 mt-1">Select a starting point for your exercise.</p>
     </div>
+    
+    <!-- GPS Status Indicator -->
+    <div id="gpsStatus" class="absolute top-4 right-4 bg-white/90 backdrop-blur-sm p-2 rounded-full shadow-lg z-[1000] hidden">
+        <div class="flex items-center gap-2 px-2">
+            <div class="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
+            <span class="text-xs font-bold text-gray-600">GPS Active</span>
+        </div>
+    </div>
 
-    <!-- Active Run Stats Panel (Hidden initially) -->
+    <!-- Active Run Stats Panel -->
     <div id="statsPanel" class="hidden absolute bottom-0 left-0 w-full bg-white rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.1)] z-[1000] p-6 transition-transform duration-300 transform translate-y-full">
         <div class="flex justify-between items-center mb-4">
             <div>
-                <p class="text-gray-500 text-sm">Target</p>
+                <p class="text-gray-500 text-sm">Target (~)</p>
                 <p class="text-2xl font-bold text-gray-800"><span id="targetDisplay">0</span> km</p>
             </div>
             <div class="text-right">
@@ -94,11 +117,11 @@
 
         <div class="flex gap-3">
             <button onclick="stopExercise()" class="flex-1 bg-red-100 text-red-600 py-3 rounded-xl font-semibold hover:bg-red-200 transition">Exit</button>
-            <button onclick="simulateMovement()" class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-500/30">
-                <i class="fas fa-play mr-2"></i>Simulate Run
+            <button onclick="toggleSimulation()" id="simBtn" class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-semibold hover:bg-gray-200 transition text-sm">
+                Debug: Sim
             </button>
         </div>
-        <p class="text-center text-xs text-gray-400 mt-3">GPS Tracking Active</p>
+        <p id="rerouteMsg" class="text-center text-xs text-orange-500 mt-3 hidden"><i class="fas fa-route"></i> Rerouting...</p>
     </div>
 
     <!-- Modal 1: Activity Selection -->
@@ -131,10 +154,10 @@
     <div id="distanceModal" class="modal fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
         <div class="bg-white rounded-2xl p-6 w-11/12 max-w-sm shadow-2xl">
             <h2 class="text-xl font-bold text-gray-800 mb-2 text-center">Set Goal Distance</h2>
-            <p class="text-center text-gray-500 text-sm mb-8">We'll create a loop route for you.</p>
+            <p class="text-center text-gray-500 text-sm mb-8">Approximate distance (+/- 10%)</p>
             
             <div class="relative mb-8 px-2">
-                <input type="range" min="1" max="10" step="0.5" value="3" id="distanceSlider" class="slider-thumb" oninput="updateDistanceValue(this.value)">
+                <input type="range" min="1" max="20" step="0.5" value="3" id="distanceSlider" class="slider-thumb" oninput="updateDistanceValue(this.value)">
                 <div class="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-3 py-1 rounded-full font-bold shadow-lg">
                     <span id="distanceValue">3</span> km
                 </div>
@@ -144,7 +167,7 @@
                 <div class="loader"></div>
             </div>
 
-            <button onclick="generateRoute()" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-lg hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition">
+            <button onclick="generateRoute(true)" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-lg hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition">
                 Create Route
             </button>
             <button onclick="backToActivity()" class="mt-4 w-full py-2 text-gray-400 text-sm hover:text-gray-600">Back</button>
@@ -158,7 +181,7 @@
                 <i class="fas fa-trophy text-4xl text-yellow-500"></i>
             </div>
             <h2 class="text-2xl font-bold text-gray-800 mb-2">Route Complete!</h2>
-            <p class="text-gray-600 mb-6">You absolutely crushed that <span id="finalActivity">run</span>.</p>
+            <p class="text-gray-600 mb-6">Great job on your <span id="finalActivity">run</span>.</p>
             
             <div class="bg-gray-50 rounded-xl p-4 mb-6">
                 <p class="text-sm text-gray-500">Total Distance</p>
@@ -178,16 +201,24 @@
         // --- State Management ---
         let map;
         let startMarker;
-        let userMarker;
-        let routeLayer;
+        let userMarker; // Shows current GPS location
+        let routeLayer; // The planned blue route
+        let traceLayer; // The path actually walked (grey/green)
+        
         let currentActivity = '';
         let targetDistanceKm = 3;
-        let selectedStartCoords = null;
-        let routeCoordinates = []; // Array of [lat, lng]
+        let startCoords = null; // Original start point
+        let routeCoordinates = []; // Planned route [lat, lng]
+        let walkedCoordinates = []; // Actual path taken [lat, lng]
+        
         let isExercising = false;
         let coveredDistance = 0;
-        let simInterval;
+        
+        // Watchers
+        let gpsWatcherId = null;
+        let simInterval = null;
         let currentSimIndex = 0;
+        let isReRouting = false;
 
         // --- Initialization ---
         document.addEventListener('DOMContentLoaded', () => {
@@ -195,16 +226,14 @@
         });
 
         function initMap() {
-            // Default to a central location (London) if geolocation isn't immediately available
             map = L.map('map').setView([51.505, -0.09], 13);
 
             L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                attribution: '&copy; OpenStreetMap &copy; CARTO',
                 subdomains: 'abcd',
                 maxZoom: 20
             }).addTo(map);
 
-            // Try to get real user location
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(position => {
                     const lat = position.coords.latitude;
@@ -213,33 +242,25 @@
                 });
             }
 
-            // Map Click Event
             map.on('click', function(e) {
                 if (isExercising) return;
                 
-                selectedStartCoords = e.latlng;
+                startCoords = e.latlng;
                 
-                // Remove old marker
                 if (startMarker) map.removeLayer(startMarker);
                 if (routeLayer) map.removeLayer(routeLayer);
+                if (traceLayer) map.removeLayer(traceLayer);
+                if (userMarker) map.removeLayer(userMarker);
 
-                // Add new marker
                 startMarker = L.marker(e.latlng).addTo(map);
-                
-                // Show Activity Modal
                 openModal('activityModal');
             });
         }
 
         // --- UI Functions ---
-        function openModal(id) {
-            document.getElementById(id).classList.add('active');
-        }
-
-        function closeModal(id) {
-            document.getElementById(id).classList.remove('active');
-        }
-
+        function openModal(id) { document.getElementById(id).classList.add('active'); }
+        function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+        
         function selectActivity(activity) {
             currentActivity = activity;
             closeModal('activityModal');
@@ -260,115 +281,147 @@
             closeModal('congratsModal');
             document.getElementById('statsPanel').classList.add('translate-y-full');
             document.getElementById('instructions').style.display = 'block';
+            document.getElementById('gpsStatus').classList.add('hidden');
             
             if (startMarker) map.removeLayer(startMarker);
             if (routeLayer) map.removeLayer(routeLayer);
+            if (traceLayer) map.removeLayer(traceLayer);
             if (userMarker) map.removeLayer(userMarker);
             
             startMarker = null;
             routeLayer = null;
+            traceLayer = null;
             userMarker = null;
             isExercising = false;
+            isReRouting = false;
             coveredDistance = 0;
-            clearInterval(simInterval);
+            walkedCoordinates = [];
             
-            // Re-enable map click
+            if(gpsWatcherId) navigator.geolocation.clearWatch(gpsWatcherId);
+            if(simInterval) clearInterval(simInterval);
+            
             map.getContainer().style.cursor = '';
         }
 
-        // --- Core Logic: Route Generation ---
+        // --- Core Logic: Advanced Route Generation ---
         
-        async function generateRoute() {
-            const btn = document.querySelector('#distanceModal button');
-            const loader = document.getElementById('routeLoading');
-            
-            btn.style.display = 'none';
-            loader.style.display = 'flex';
+        // Helper: Calculate destination point given distance and bearing
+        function getDestinationPoint(lat, lng, distKm, bearingDegrees) {
+            const R = 6371; // Earth Radius
+            const brng = bearingDegrees * Math.PI / 180;
+            const d = distKm;
+            const lat1 = lat * Math.PI / 180;
+            const lon1 = lng * Math.PI / 180;
 
-            const lat = selectedStartCoords.lat;
-            const lng = selectedStartCoords.lng;
-            
-            // 1. Generate Waypoints (Geometric Diamond Shape)
-            // Circumference ~ distance. Radius ~ distance / 2pi.
-            // Converting km to degrees (roughly). 1 deg lat ~ 111km.
-            
-            const R_km = targetDistanceKm / (2 * Math.PI); 
-            const dLat = R_km / 111; 
-            const dLng = R_km / (111 * Math.cos(lat * (Math.PI / 180)));
+            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d/R) + Math.cos(lat1) * Math.sin(d/R) * Math.cos(brng));
+            const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(d/R) * Math.cos(lat1), Math.cos(d/R) - Math.sin(lat1) * Math.sin(lat2));
 
-            // Create 4 points around the center to form a loop
+            return {
+                lat: lat2 * 180 / Math.PI,
+                lng: lon2 * 180 / Math.PI
+            };
+        }
+
+        async function generateRoute(isInitial = true, customStart = null, customTarget = null) {
+            let btn, loader;
+            
+            if (isInitial) {
+                btn = document.querySelector('#distanceModal button');
+                loader = document.getElementById('routeLoading');
+                btn.style.display = 'none';
+                loader.style.display = 'flex';
+            } else {
+                // Rerouting UI feedback
+                document.getElementById('rerouteMsg').classList.remove('hidden');
+            }
+
+            const origin = customStart || startCoords;
+            const dist = customTarget || targetDistanceKm;
+            
+            // Algorithm: Circular/Triangular Loop
+            // To get a loop of approx X km, we create a polygon (triangle)
+            // Side length approx dist / 3.
+            
+            const sideLen = dist / 3;
+            // Random bearing for variety
+            const bearing = Math.floor(Math.random() * 360);
+            
+            // Point 1: Outward
+            const p1 = getDestinationPoint(origin.lat, origin.lng, sideLen, bearing);
+            // Point 2: Turn 120 degrees to form a rough triangle back towards start
+            const p2 = getDestinationPoint(p1.lat, p1.lng, sideLen, bearing + 120);
+            
+            // Waypoints: Start -> P1 -> P2 -> Start
             const points = [
-                `${lng},${lat}`, // Start
-                `${lng + dLng},${lat + dLat}`, // NE
-                `${lng + dLng * 1.5},${lat - dLat * 0.5}`, // SE (slightly skewed for variation)
-                `${lng - dLng},${lat - dLat}`, // SW
-                `${lng - dLng},${lat + dLat}`, // NW
-                `${lng},${lat}`  // End
+                `${origin.lng},${origin.lat}`,
+                `${p1.lng},${p1.lat}`,
+                `${p2.lng},${p2.lat}`,
+                `${startCoords.lng},${startCoords.lat}` // Always end at original start
             ];
-
+            
             const coordsString = points.join(';');
-
-            // 2. Fetch Snap-to-Road Route from OSRM
-            // Profiles: 'foot', 'bike', 'car'.
-            let profile = 'foot';
-            if (currentActivity === 'Biking') profile = 'bike';
+            
+            // Profile Selection
+            let profile = 'foot'; // Default for walking/running
+            if (currentActivity === 'Biking') profile = 'bike'; 
 
             try {
+                // Using OSRM Route service (not Trip) to enforce the waypoint order
                 const response = await fetch(`https://router.project-osrm.org/route/v1/${profile}/${coordsString}?overview=full&geometries=geojson`);
                 const data = await response.json();
 
-                closeModal('distanceModal');
-                btn.style.display = 'block';
-                loader.style.display = 'none';
+                if (isInitial) {
+                    closeModal('distanceModal');
+                    btn.style.display = 'block';
+                    loader.style.display = 'none';
+                } else {
+                    document.getElementById('rerouteMsg').classList.add('hidden');
+                }
 
                 if (data.code === 'Ok') {
-                    // Extract coordinates (GeoJSON is [lng, lat], Leaflet wants [lat, lng])
                     const geojsonCoords = data.routes[0].geometry.coordinates;
-                    routeCoordinates = geojsonCoords.map(c => [c[1], c[0]]);
+                    const newRouteCoords = geojsonCoords.map(c => [c[1], c[0]]);
                     
-                    startExercise(routeCoordinates);
+                    if (isInitial) {
+                        startExercise(newRouteCoords);
+                    } else {
+                        updateRouteLayer(newRouteCoords);
+                    }
                 } else {
-                    alert("Could not find a road route here. Try a different spot.");
+                    if (isInitial) alert("Could not generate a valid loop here. Try a different spot.");
                 }
             } catch (e) {
                 console.error(e);
-                alert("Routing service is busy. Please try again in a moment.");
-                closeModal('distanceModal');
-                btn.style.display = 'block';
-                loader.style.display = 'none';
+                if (isInitial) {
+                    alert("Routing service busy.");
+                    closeModal('distanceModal');
+                    btn.style.display = 'block';
+                    loader.style.display = 'none';
+                }
             }
         }
 
         function startExercise(coords) {
-            // Draw Route
-            if (routeLayer) map.removeLayer(routeLayer);
-            routeLayer = L.polyline(coords, {
-                color: '#3b82f6',
-                weight: 6,
-                opacity: 0.8,
-                lineJoin: 'round'
-            }).addTo(map);
+            updateRouteLayer(coords);
 
-            map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
-
-            // Initialize User Marker at start
+            // Initialize User Marker
             const startPt = coords[0];
-            userMarker = L.circleMarker(startPt, {
-                radius: 8,
-                fillColor: '#ef4444',
-                color: '#fff',
-                weight: 2,
-                fillOpacity: 1
+            userMarker = L.marker(startPt, {
+                icon: L.divIcon({
+                    className: 'gps-pulse',
+                    iconSize: [15, 15],
+                    iconAnchor: [7.5, 7.5]
+                })
             }).addTo(map);
+
+            // Initialize Trace Layer (Actual path)
+            traceLayer = L.polyline([], { color: '#6b7280', weight: 4, dashArray: '5, 10' }).addTo(map);
 
             // UI Updates
             document.getElementById('instructions').style.display = 'none';
             const statsPanel = document.getElementById('statsPanel');
             statsPanel.classList.remove('hidden');
-            // Allow render then slide up
-            setTimeout(() => {
-                statsPanel.classList.remove('translate-y-full');
-            }, 50);
+            setTimeout(() => statsPanel.classList.remove('translate-y-full'), 50);
 
             document.getElementById('targetDisplay').innerText = targetDistanceKm;
             document.getElementById('coveredDisplay').innerText = "0.00";
@@ -376,66 +429,170 @@
 
             isExercising = true;
             coveredDistance = 0;
-            currentSimIndex = 0;
+            walkedCoordinates = [startPt]; // Reset walked history
+
+            startGPS();
+        }
+
+        function updateRouteLayer(coords) {
+            routeCoordinates = coords;
+            if (routeLayer) map.removeLayer(routeLayer);
+            routeLayer = L.polyline(coords, {
+                color: '#3b82f6', // Blue for planned route
+                weight: 6,
+                opacity: 0.8,
+                lineJoin: 'round'
+            }).addTo(map);
+            
+            // Don't autofit bounds on reroute updates to avoid jarring user experience
+            if (!isExercising) {
+                map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+            }
         }
 
         function stopExercise() {
-            if(confirm("Are you sure you want to stop this route?")) {
+            if(confirm("End current session?")) {
                 resetApp();
             }
         }
 
-        // --- Simulation & Completion Logic ---
+        // --- GPS & Tracking Logic ---
 
-        function simulateMovement() {
+        function startGPS() {
+            if (!navigator.geolocation) {
+                alert("GPS not supported.");
+                return;
+            }
+            
+            document.getElementById('gpsStatus').classList.remove('hidden');
+
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 0
+            };
+
+            gpsWatcherId = navigator.geolocation.watchPosition(
+                handleGPSUpdate, 
+                err => console.warn('GPS Error', err), 
+                options
+            );
+        }
+
+        function handleGPSUpdate(position) {
+            if (!isExercising || isReRouting) return;
+
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const currentPos = L.latLng(lat, lng);
+
+            // Update UI Marker
+            userMarker.setLatLng(currentPos);
+            
+            // Add to Trace Path (Actual Path)
+            walkedCoordinates.push([lat, lng]);
+            traceLayer.setLatLngs(walkedCoordinates);
+
+            // Calculate Distance Added
+            if (walkedCoordinates.length > 1) {
+                const prev = walkedCoordinates[walkedCoordinates.length - 2];
+                const distAdded = getDistanceFromLatLonInKm(prev[0], prev[1], lat, lng);
+                // Filter GPS jitter (ignore tiny jumps < 2 meters or huge jumps > 100m/sec)
+                if (distAdded > 0.002 && distAdded < 0.5) {
+                    coveredDistance += distAdded;
+                    updateStats();
+                }
+            }
+
+            // Check Deviation & Reroute
+            checkRouteDeviation(currentPos);
+            
+            // Check Completion (Close to start point AND covered > 80% of target)
+            const distToStart = getDistanceFromLatLonInKm(lat, lng, startCoords.lat, startCoords.lng);
+            if (distToStart < 0.05 && coveredDistance > (targetDistanceKm * 0.8)) {
+                finishRoute();
+            }
+        }
+
+        function checkRouteDeviation(currentLatLng) {
+            // Find distance to closest point on the PLANNED route
+            let minDistance = Infinity;
+            
+            // Sample optimization: check every 5th point to save CPU
+            for (let i = 0; i < routeCoordinates.length; i += 5) {
+                const pt = routeCoordinates[i];
+                const d = getDistanceFromLatLonInKm(currentLatLng.lat, currentLatLng.lng, pt[0], pt[1]);
+                if (d < minDistance) minDistance = d;
+            }
+
+            // If user is > 100m (0.1km) away from planned route
+            if (minDistance > 0.1) {
+                triggerReroute(currentLatLng);
+            }
+        }
+
+        async function triggerReroute(currentLatLng) {
+            if (isReRouting) return;
+            isReRouting = true;
+            console.log("User deviated. Rerouting...");
+
+            // Logic: Calculate how much distance is left to hit the target
+            // If we have covered 1km of 3km, we need 2km more.
+            // If the direct distance to home is 0.5km, we need to loop a bit (1.5km extra).
+            // If direct distance to home is > remaining, just route home.
+            
+            const remainingNeeded = Math.max(0.5, targetDistanceKm - coveredDistance);
+            
+            // We pass 'remainingNeeded' as the new target distance for the generator
+            // The generator uses current Pos as start, and original Start as end.
+            
+            await generateRoute(false, {lat: currentLatLng.lat, lng: currentLatLng.lng}, remainingNeeded);
+            
+            isReRouting = false;
+        }
+
+        function updateStats() {
+            document.getElementById('coveredDisplay').innerText = coveredDistance.toFixed(2);
+            const percent = Math.min(100, (coveredDistance / targetDistanceKm) * 100);
+            document.getElementById('progressBar').style.width = percent + "%";
+        }
+
+        function finishRoute() {
+            if(gpsWatcherId) navigator.geolocation.clearWatch(gpsWatcherId);
+            if(simInterval) clearInterval(simInterval);
+            isExercising = false;
+            
+            document.getElementById('finalActivity').innerText = currentActivity.toLowerCase();
+            document.getElementById('finalDist').innerText = coveredDistance.toFixed(2);
+            openModal('congratsModal');
+        }
+
+        // --- Utilities ---
+
+        function toggleSimulation() {
+            if (simInterval) {
+                clearInterval(simInterval);
+                simInterval = null;
+                return;
+            }
             if (!isExercising || routeCoordinates.length === 0) return;
             
-            // Prevent multiple intervals
-            if (simInterval) clearInterval(simInterval);
-
-            // Speed depends on activity
-            let speed = 20; // lower is faster
-            if (currentActivity === 'Biking') speed = 10;
-
+            // Simulates movement by iterating the PLANNED route array
             simInterval = setInterval(() => {
                 if (currentSimIndex >= routeCoordinates.length - 1) {
                     finishRoute();
                     return;
                 }
-
                 currentSimIndex++;
-                const newPos = routeCoordinates[currentSimIndex];
+                const pt = routeCoordinates[currentSimIndex];
                 
-                // Update Marker
-                userMarker.setLatLng(newPos);
-                
-                // Calculate Distance (Simple accumulation based on steps)
-                // In a real app, we'd sum distance between GPS points. 
-                // Here we just estimate progress % based on array index for smoothness
-                const progress = currentSimIndex / routeCoordinates.length;
-                const currentKm = targetDistanceKm * progress;
-                
-                updateStats(currentKm, progress * 100);
-
-            }, speed);
+                // Mock a GPS object structure
+                handleGPSUpdate({
+                    coords: { latitude: pt[0], longitude: pt[1] }
+                });
+            }, 500); // Fast speed
         }
 
-        function updateStats(km, percent) {
-            document.getElementById('coveredDisplay').innerText = km.toFixed(2);
-            document.getElementById('progressBar').style.width = percent + "%";
-        }
-
-        function finishRoute() {
-            clearInterval(simInterval);
-            isExercising = false;
-            
-            // Show Congrats
-            document.getElementById('finalActivity').innerText = currentActivity.toLowerCase();
-            document.getElementById('finalDist').innerText = targetDistanceKm;
-            openModal('congratsModal');
-        }
-
-        // Helper: Haversine Formula for real distance (Not used in simple simulation but good for real GPS)
         function getDistanceFromLatLonInKm(lat1,lon1,lat2,lon2) {
             var R = 6371; 
             var dLat = deg2rad(lat2-lat1);  
@@ -444,13 +601,10 @@
                 Math.sin(dLat/2) * Math.sin(dLat/2) +
                 Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
             var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-            var d = R * c; 
-            return d;
+            return R * c;
         }
 
-        function deg2rad(deg) {
-            return deg * (Math.PI/180);
-        }
+        function deg2rad(deg) { return deg * (Math.PI/180); }
         
     </script>
 </body>
